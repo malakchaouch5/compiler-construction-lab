@@ -7,17 +7,17 @@ print(3 + )
 
 print(4)
 
-# Variable initializers must be literals, not expressions.
+# This declaration is invalid because it comes after top-level statements.
 value: int = 1 + 2
 after_initializer_error: int = 3
 
-# Function header errors should not prevent later top-level statements.
+# This function declaration is also after top-level statements.
 def broken(a: int, b) -> int:
     local: int = a
     return a + b
 print(5)
 
-# Class bodies should recover after an invalid member.
+# This class declaration is likewise after top-level statements.
 class Pair(object):
     first: int = 0
     second = 1

@@ -83,13 +83,13 @@ action code {:
     }
 :}
 
-terminal NEWLINE, INDENT, DEDENT, UNRECOGNIZED, INVALID_TYPE_STRING, RESERVED, PASS, END_OF_INPUT;
-terminal String ID, STRING;
-terminal PLUS, MINUS, MULT, DIV, MOD, LT, GT, LE, GE, EQ, NE, ASSIGN;
-terminal COLON, COMMA, DOT, LPAREN, RPAREN, LBRACKET, RBRACKET;
+terminal NEWLINE, INDENT, DEDENT, UNRECOGNIZED, RESERVED, PASS;
+terminal String IDENTIFIER, IDSTRING, STRING;
+terminal PLUS, MINUS, TIMES, IDIV, MOD, LT, GT, LEQ, GEQ, EQEQ, NEQ, EQ;
+terminal COLON, COMMA, DOT, LPAREN, RPAREN, LINDEX, RINDEX;
 terminal IF, ELSE, ELIF, WHILE, FOR, IN, DEF, CLASS, RETURN, GLOBAL, NONLOCAL;
 terminal AND, OR, NOT, IS, TRUE, FALSE, NONE, ARROW;
-terminal Integer NUMBER;
+terminal Integer INTEGER;
 terminal UMINUS;
 
 non terminal Program start_program;
@@ -101,6 +101,7 @@ non terminal List<Stmt> statements;
 non terminal List<Stmt> optional_statements;
 non terminal IfTail if_tail;
 non terminal List<TypedVar> parameters;
+non terminal List<TypedVar> parameter_list;
 non terminal List<Expr> expressions;
 non terminal List<Expr> arguments;
 non terminal List<Expr> assignment_targets;
@@ -115,24 +116,30 @@ non terminal TypeAnnotation optional_return_type;
 non terminal TypedVar typed_variable;
 
 precedence left OR;
-precedence left ID;
+precedence left IDENTIFIER;
 precedence left LPAREN;
 precedence left AND;
 precedence right NOT;
-precedence nonassoc LT, GT, LE, GE, EQ, NE, IS;
+precedence nonassoc LT, GT, LEQ, GEQ, EQEQ, NEQ, IS;
 precedence left PLUS, MINUS;
-precedence left MULT, DIV, MOD;
+precedence left TIMES, IDIV, MOD;
 precedence right UMINUS;
 
 start with start_program;
 
-start_program ::= decl_list:d optional_statements:s END_OF_INPUT:eof
-    {: boolean hasTopLevelStatements = !s.isEmpty()
-           || (sxleft != null && sxleft.getLine() > 0);
-       ComplexSymbolFactory.Location programLeft = !d.isEmpty() ? left(d)
-           : (hasTopLevelStatements ? sxleft : new ComplexSymbolFactory.Location(0, 0));
-       ComplexSymbolFactory.Location programRight = hasTopLevelStatements ? sxright
-           : (!d.isEmpty() ? dxright : new ComplexSymbolFactory.Location(0, 0));
+start_program ::= decl_list:d optional_statements:s
+    {: ComplexSymbolFactory.Location programLeft =
+           ((ChocoPyLexer) getScanner()).getProgramStartLocation();
+       if (programLeft == null) {
+           programLeft = !d.isEmpty() ? left(d)
+               : (!s.isEmpty() ? left(s) : new ComplexSymbolFactory.Location(0, 0));
+       }
+       ComplexSymbolFactory.Location programRight =
+           ((ChocoPyLexer) getScanner()).getProgramEndLocation();
+       if (programRight == null) {
+           programRight = !s.isEmpty() ? right(s)
+               : (!d.isEmpty() ? right(d) : new ComplexSymbolFactory.Location(0, 0));
+       }
        RESULT = new Program(programLeft, programRight, d, s, errors); :}
     ;
 
@@ -141,29 +148,17 @@ decl_list ::= /* empty declaration list */
     | decl_list:ds declaration:d {: RESULT = append(ds, d); :}
     ;
 
-declaration ::= typed_variable:v ASSIGN literal:value NEWLINE
+declaration ::= typed_variable:v EQ literal:value NEWLINE
     {: RESULT = new VarDef(vxleft, valuexright, v, value); :}
-    | GLOBAL:g ID:name NEWLINE
-    {: Identifier id = new Identifier(namexleft, namexright, name);
-       RESULT = new GlobalDecl(gxleft, namexright, id); :}
-    | GLOBAL:g NEWLINE
-    {: errors.syntaxError(gxleft, gxright, "Parse error near token GLOBAL: global");
-       RESULT = null; :}
-    | NONLOCAL:n ID:name NEWLINE
-    {: Identifier id = new Identifier(namexleft, namexright, name);
-       RESULT = new NonLocalDecl(nxleft, namexright, id); :}
-    | NONLOCAL:n NEWLINE
-    {: errors.syntaxError(nxleft, nxright, "Parse error near token NONLOCAL: nonlocal");
-       RESULT = null; :}
     | function_definition:f
     {: RESULT = f; :}
     | CLASS error NEWLINE INDENT class_decl_list:members DEDENT
     {: RESULT = null; :}
-    | CLASS:c ID:name LPAREN ID:parent RPAREN COLON NEWLINE INDENT class_decl_list:members DEDENT
+    | CLASS:c IDENTIFIER:name LPAREN IDENTIFIER:parent RPAREN COLON NEWLINE INDENT class_decl_list:members DEDENT
     {: Identifier id = new Identifier(namexleft, namexright, name);
        Identifier sup = new Identifier(parentxleft, parentxright, parent);
        RESULT = new ClassDef(cxleft, membersxright, id, sup, members); :}
-    | CLASS:c ID:name LPAREN ID:parent RPAREN COLON NEWLINE INDENT PASS NEWLINE:pass_end DEDENT:end
+    | CLASS:c IDENTIFIER:name LPAREN IDENTIFIER:parent RPAREN COLON NEWLINE INDENT PASS NEWLINE:pass_end DEDENT:end
     {: Identifier id = new Identifier(namexleft, namexright, name);
        Identifier sup = new Identifier(parentxleft, parentxright, parent);
        RESULT = new ClassDef(cxleft, pass_endxright, id, sup, empty()); :}
@@ -179,13 +174,13 @@ class_decl_list ::= class_member:member
     {: RESULT = members; :}
     ;
 
-class_member ::= typed_variable:v ASSIGN literal:value NEWLINE
+class_member ::= typed_variable:v EQ literal:value NEWLINE
     {: RESULT = new VarDef(vxleft, valuexright, v, value); :}
     | function_definition:f
     {: RESULT = f; :}
     ;
 
-function_definition ::= DEF:d ID:name LPAREN parameters:params RPAREN optional_return_type:ret COLON:c NEWLINE INDENT function_body:body DEDENT:end
+function_definition ::= DEF:d IDENTIFIER:name LPAREN parameters:params RPAREN optional_return_type:ret COLON:c NEWLINE INDENT function_body:body DEDENT:end
     {: Identifier id = new Identifier(namexleft, namexright, name);
        TypeAnnotation returnType = ret == null
            ? new ClassType(cxleft, cxleft, "<None>") : ret;
@@ -208,12 +203,12 @@ function_body ::= function_declaration:declaration function_body:body
        RESULT = body; :}
     ;
 
-function_declaration ::= typed_variable:v ASSIGN literal:value NEWLINE
+function_declaration ::= typed_variable:v EQ literal:value NEWLINE
     {: RESULT = new VarDef(vxleft, valuexright, v, value); :}
-    | GLOBAL:g ID:name NEWLINE
+    | GLOBAL:g IDENTIFIER:name NEWLINE
     {: Identifier id = new Identifier(namexleft, namexright, name);
        RESULT = new GlobalDecl(gxleft, namexright, id); :}
-    | NONLOCAL:n ID:name NEWLINE
+    | NONLOCAL:n IDENTIFIER:name NEWLINE
     {: Identifier id = new Identifier(namexleft, namexright, name);
        RESULT = new NonLocalDecl(nxleft, namexright, id); :}
     | function_definition:f
@@ -221,25 +216,21 @@ function_declaration ::= typed_variable:v ASSIGN literal:value NEWLINE
     ;
 
 parameters ::= {: RESULT = empty(); :}
-    | typed_variable:v {: RESULT = one(v); :}
-    | parameters:ps COMMA typed_variable:v {: RESULT = append(ps, v); :}
+    | parameter_list:ps {: RESULT = ps; :}
     ;
 
-typed_variable ::= ID:name COLON type:t
+parameter_list ::= typed_variable:v {: RESULT = one(v); :}
+    | parameter_list:ps COMMA typed_variable:v {: RESULT = append(ps, v); :}
+    ;
+
+typed_variable ::= IDENTIFIER:name COLON type:t
     {: Identifier id = new Identifier(namexleft, namexright, name);
        RESULT = new TypedVar(namexleft, txright, id, t); :}
     ;
 
-type ::= ID:name
-    {: RESULT = new ClassType(namexleft, namexright, name); :}
-    | STRING:name
-    {: if (!name.matches("[A-Za-z_][A-Za-z_0-9]*")) {
-           errors.syntaxError(namexleft, namexright,
-                              "Parse error near token STRING: invalid type name");
-       }
-       RESULT = new ClassType(namexleft, namexright, name); :}
-    | LBRACKET:l type:t RBRACKET:r
-    {: RESULT = new ListType(lxleft, rxright, t); :}
+type ::= IDENTIFIER:name {: RESULT = new ClassType(namexleft, namexright, name); :}
+    | IDSTRING:name {: RESULT = new ClassType(namexleft, namexright, name); :}
+    | LINDEX:l type:t RINDEX:r {: RESULT = new ListType(lxleft, rxright, t); :}
     ;
 
 optional_statements ::= {: RESULT = empty(); :}
@@ -262,20 +253,20 @@ simple_statement ::= expression:e
     {: RESULT = new ReturnStmt(rxleft, exright, e); :}
     | RETURN:r
     {: RESULT = new ReturnStmt(rxleft, rxright, null); :}
-    | assignment_targets:targets ASSIGN expression:value
+    | assignment_targets:targets EQ expression:value
     {: RESULT = new AssignStmt(left(targets), valuexright, targets, value); :}
     ;
 
 assignment_targets ::= assignment_target:e {: RESULT = one(e); :}
-    | assignment_targets:targets ASSIGN assignment_target:e {: RESULT = append(targets, e); :}
+    | assignment_targets:targets EQ assignment_target:e {: RESULT = append(targets, e); :}
     ;
 
-assignment_target ::= ID:name
+assignment_target ::= IDENTIFIER:name
     {: RESULT = new Identifier(namexleft, namexright, name); :}
-    | postfix:object DOT ID:name
+    | postfix:object DOT IDENTIFIER:name
     {: Identifier id = new Identifier(namexleft, namexright, name);
        RESULT = new MemberExpr(objectxleft, namexright, object, id); :}
-    | postfix:object LBRACKET expression:index RBRACKET:r
+    | postfix:object LINDEX expression:index RINDEX:r
     {: RESULT = new IndexExpr(objectxleft, rxright, object, index); :}
     ;
 
@@ -284,7 +275,7 @@ compound_statement ::= IF:i expression:condition COLON NEWLINE INDENT statements
        RESULT = new IfStmt(ixleft, nodeEnd, condition, then_body, tail.body); :}
     | WHILE:w expression:condition COLON NEWLINE INDENT statements:body DEDENT:end
     {: RESULT = new WhileStmt(wxleft, endxright, condition, body); :}
-    | FOR:f ID:name IN expression:iterable COLON NEWLINE INDENT statements:body DEDENT:end
+    | FOR:f IDENTIFIER:name IN expression:iterable COLON NEWLINE INDENT statements:body DEDENT:end
     {: Identifier id = new Identifier(namexleft, namexright, name);
        RESULT = new ForStmt(fxleft, endxright, id, iterable, body); :}
     ;
@@ -319,10 +310,10 @@ not_expression ::= comparison:e {: RESULT = e; :}
 comparison ::= arithmetic:e {: RESULT = e; :}
     | arithmetic:l LT arithmetic:r {: RESULT = new BinaryExpr(lxleft, rxright, l, "<", r); :}
     | arithmetic:l GT arithmetic:r {: RESULT = new BinaryExpr(lxleft, rxright, l, ">", r); :}
-    | arithmetic:l LE arithmetic:r {: RESULT = new BinaryExpr(lxleft, rxright, l, "<=", r); :}
-    | arithmetic:l GE arithmetic:r {: RESULT = new BinaryExpr(lxleft, rxright, l, ">=", r); :}
-    | arithmetic:l EQ arithmetic:r {: RESULT = new BinaryExpr(lxleft, rxright, l, "==", r); :}
-    | arithmetic:l NE arithmetic:r {: RESULT = new BinaryExpr(lxleft, rxright, l, "!=", r); :}
+    | arithmetic:l LEQ arithmetic:r {: RESULT = new BinaryExpr(lxleft, rxright, l, "<=", r); :}
+    | arithmetic:l GEQ arithmetic:r {: RESULT = new BinaryExpr(lxleft, rxright, l, ">=", r); :}
+    | arithmetic:l EQEQ arithmetic:r {: RESULT = new BinaryExpr(lxleft, rxright, l, "==", r); :}
+    | arithmetic:l NEQ arithmetic:r {: RESULT = new BinaryExpr(lxleft, rxright, l, "!=", r); :}
     | arithmetic:l IS arithmetic:r {: RESULT = new BinaryExpr(lxleft, rxright, l, "is", r); :}
     ;
 
@@ -331,8 +322,8 @@ arithmetic ::= term:e {: RESULT = e; :}
     | arithmetic:l MINUS term:r {: RESULT = new BinaryExpr(lxleft, rxright, l, "-", r); :}
     ;
 term ::= factor:e {: RESULT = e; :}
-    | term:l MULT factor:r {: RESULT = new BinaryExpr(lxleft, rxright, l, "*", r); :}
-    | term:l DIV factor:r {: RESULT = new BinaryExpr(lxleft, rxright, l, "//", r); :}
+    | term:l TIMES factor:r {: RESULT = new BinaryExpr(lxleft, rxright, l, "*", r); :}
+    | term:l IDIV factor:r {: RESULT = new BinaryExpr(lxleft, rxright, l, "//", r); :}
     | term:l MOD factor:r {: RESULT = new BinaryExpr(lxleft, rxright, l, "%", r); :}
     ;
 factor ::= atom:e {: RESULT = e; :}
@@ -343,23 +334,23 @@ factor ::= atom:e {: RESULT = e; :}
 atom ::= postfix:e {: RESULT = e; :}
     ;
 
-postfix ::= ID:name
+postfix ::= IDENTIFIER:name
     {: RESULT = new Identifier(namexleft, namexright, name); :}
     | literal:l {: RESULT = l; :}
     | LPAREN expression:e RPAREN {: RESULT = e; :}
-    | LBRACKET:l expressions:items RBRACKET:r
+    | LINDEX:l expressions:items RINDEX:r
     {: RESULT = new ListExpr(lxleft, rxright, items); :}
-    | LBRACKET:l RBRACKET:r
+    | LINDEX:l RINDEX:r
     {: RESULT = new ListExpr(lxleft, rxright, empty()); :}
-    | ID:name LPAREN arguments:args RPAREN:r
+    | IDENTIFIER:name LPAREN arguments:args RPAREN:r
     {: Identifier id = new Identifier(namexleft, namexright, name);
        RESULT = new CallExpr(namexleft, rxright, id, args); :}
-    | postfix:object DOT ID:name
+    | postfix:object DOT IDENTIFIER:name
     {: Identifier id = new Identifier(namexleft, namexright, name);
        RESULT = new MemberExpr(objectxleft, namexright, object, id); :}
-    | postfix:object LBRACKET expression:index RBRACKET:r
+    | postfix:object LINDEX expression:index RINDEX:r
     {: RESULT = new IndexExpr(objectxleft, rxright, object, index); :}
-    | postfix:method DOT ID:name LPAREN arguments:args RPAREN:r
+    | postfix:method DOT IDENTIFIER:name LPAREN arguments:args RPAREN:r
     {: Identifier id = new Identifier(namexleft, namexright, name);
        MemberExpr member = new MemberExpr(methodxleft, namexright, method, id);
        RESULT = new MethodCallExpr(methodxleft, rxright, member, args); :}
@@ -373,8 +364,9 @@ expressions ::= expression:e {: RESULT = one(e); :}
     | expressions:items COMMA expression:e {: RESULT = append(items, e); :}
     ;
 
-literal ::= NUMBER:n {: RESULT = new IntegerLiteral(nxleft, nxright, n); :}
+literal ::= INTEGER:n {: RESULT = new IntegerLiteral(nxleft, nxright, n); :}
     | STRING:s {: RESULT = new StringLiteral(sxleft, sxright, s); :}
+    | IDSTRING:s {: RESULT = new StringLiteral(sxleft, sxright, s); :}
     | TRUE:t {: RESULT = new BooleanLiteral(txleft, txright, true); :}
     | FALSE:f {: RESULT = new BooleanLiteral(fxleft, fxright, false); :}
     | NONE:n {: RESULT = new NoneLiteral(nxleft, nxright); :}

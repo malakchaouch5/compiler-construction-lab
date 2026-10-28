@@ -1,255 +1,328 @@
 package chocopy.pa1;
 import java_cup.runtime.*;
-import java.util.Stack;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.ArrayDeque;
+import java.util.Deque;
 
 %%
+
+/*** Do not change the flags below unless you know what you are doing. ***/
 
 %unicode
 %line
 %column
+
 %class ChocoPyLexer
 %public
+
 %cupsym ChocoPyTokens
 %cup
 %cupdebug
+
 %eofclose false
 
+/*** Do not change the flags above unless you know what you are doing. ***/
+
+/* The lexer works in two states:
+ *   YYINITIAL  - we are at the beginning of a physical line and still have
+ *                to decide whether the line is blank and how far it is
+ *                indented (this is where INDENT/DEDENT tokens come from);
+ *   LINE_BODY  - we are inside a logical line and produce ordinary tokens
+ *                until the line break, which becomes a NEWLINE token. */
+%state LINE_BODY
+
+/* The following code section is copied verbatim to the
+ * generated lexer class. */
 %{
+    /* The code below includes some convenience methods to create tokens
+     * of a given type and optionally a value that the CUP parser can
+     * understand. Specifically, a lot of the logic below deals with
+     * embedded information about where in the source code a given token
+     * was recognized, so that the parser can report errors accurately.
+     * (It need not be modified for this project.) */
+
+    /** Producer of token-related values for the parser. */
     final ComplexSymbolFactory symbolFactory = new ComplexSymbolFactory();
-    private final Stack<Integer> indents = new Stack<Integer>();
-    private final List<Symbol> pending = new ArrayList<Symbol>();
-    private boolean atLineStart = true;
-    private boolean eofDone = false;
-    private int eofDedents = 0;
-    private int previousToken = -1;
-    private int tokenBeforePrevious = -1;
-    private int pendingIndent = 0;
-    private ComplexSymbolFactory.Location indentLeft;
-    private ComplexSymbolFactory.Location indentRight;
-    private String indentText = "";
-    private Symbol symbol(int type) { return symbol(type, yytext()); }
+    private ComplexSymbolFactory.Location programStartLocation;
+    private ComplexSymbolFactory.Location programEndLocation;
+
+    public ComplexSymbolFactory.Location getProgramStartLocation() {
+        return programStartLocation;
+    }
+
+    public ComplexSymbolFactory.Location getProgramEndLocation() {
+        return programEndLocation;
+    }
+
+    /** Return a terminal symbol of syntactic category TYPE and no
+     *  semantic value at the current source location. */
+    private Symbol symbol(int type) {
+        return symbol(type, yytext());
+    }
+
+    /** Return a terminal symbol of syntactic category TYPE and semantic
+     *  value VALUE at the current source location. */
     private Symbol symbol(int type, Object value) {
-        int emittedType = type;
-        if (type == ChocoPyTokens.STRING && value instanceof String
-                && ((previousToken == ChocoPyTokens.COLON
-                     && tokenBeforePrevious == ChocoPyTokens.ID)
-                    || previousToken == ChocoPyTokens.ARROW)
-                && !((String) value).matches("[A-Za-z_][A-Za-z_0-9]*")) {
-            emittedType = ChocoPyTokens.INVALID_TYPE_STRING;
-        }
         ComplexSymbolFactory.Location left =
             new ComplexSymbolFactory.Location(yyline + 1, yycolumn + 1);
         ComplexSymbolFactory.Location right =
             new ComplexSymbolFactory.Location(yyline + 1, yycolumn + yylength());
-        if (type == ChocoPyTokens.NEWLINE || type == ChocoPyTokens.INDENT
-                || type == ChocoPyTokens.DEDENT) {
-            previousToken = -1;
-            tokenBeforePrevious = -1;
-        } else {
-            tokenBeforePrevious = previousToken;
-            previousToken = emittedType;
+        if (programStartLocation == null && type != ChocoPyTokens.EOF
+                && type != ChocoPyTokens.NEWLINE) {
+            programStartLocation = left;
         }
-        return symbolFactory.newSymbol(ChocoPyTokens.terminalNames[emittedType], emittedType,
-            left, right, value);
-    }
-    private Symbol virtual(int type) {
-        ComplexSymbolFactory.Location loc = new ComplexSymbolFactory.Location(yyline + 1, yycolumn + 1);
-        return symbolFactory.newSymbol(ChocoPyTokens.terminalNames[type], type, loc, loc, null);
-    }
-    private Symbol dedent() {
-        ComplexSymbolFactory.Location left = new ComplexSymbolFactory.Location(yyline + 1, yycolumn + 1);
-        ComplexSymbolFactory.Location right = new ComplexSymbolFactory.Location(yyline + 1, yycolumn);
-        return symbolFactory.newSymbol(ChocoPyTokens.terminalNames[ChocoPyTokens.DEDENT],
-            ChocoPyTokens.DEDENT, left, right, "");
-    }
-    private Symbol eofDedent() {
-        ComplexSymbolFactory.Location location =
-            new ComplexSymbolFactory.Location(yyline + 1, ++eofDedents);
-        return symbolFactory.newSymbol(ChocoPyTokens.terminalNames[ChocoPyTokens.DEDENT],
-            ChocoPyTokens.DEDENT, location, location, "");
-    }
-    private String decodedStringLiteral() {
-        String raw = yytext();
-        StringBuilder decoded = new StringBuilder(raw.length() - 2);
-        for (int i = 1; i < raw.length() - 1; i++) {
-            char ch = raw.charAt(i);
-            if (ch != '\\') {
-                decoded.append(ch);
-                continue;
-            }
-            char escaped = raw.charAt(++i);
-            switch (escaped) {
-            case '\\': decoded.append('\\'); break;
-            case '"': decoded.append('"'); break;
-            case 'n': decoded.append('\n'); break;
-            case 't': decoded.append('\t'); break;
-            default: throw new IllegalStateException("Unexpected string escape: \\" + escaped);
-            }
+        if (type == ChocoPyTokens.NEWLINE) {
+            programEndLocation = right;
         }
-        return decoded.toString();
+        return symbolFactory.newSymbol(ChocoPyTokens.terminalNames[type], type,
+            left, right,
+            value);
     }
-    private Symbol endToken() {
+
+    /** Return a terminal symbol of syntactic category TYPE with semantic
+     *  value VALUE that spans the columns FIRSTCOLUMN..LASTCOLUMN
+     *  (1-based, inclusive) of the current line. Used for the
+     *  INDENT/DEDENT tokens, whose extent is the leading whitespace of a
+     *  line rather than the text matched by the current rule. */
+    private Symbol symbolInLine(int type, Object value,
+                                int firstColumn, int lastColumn) {
         ComplexSymbolFactory.Location left =
-            new ComplexSymbolFactory.Location(yyline + 1, yycolumn + 1);
+            new ComplexSymbolFactory.Location(yyline + 1, firstColumn);
         ComplexSymbolFactory.Location right =
-            new ComplexSymbolFactory.Location(yyline + 1, yycolumn);
-        return symbolFactory.newSymbol(ChocoPyTokens.terminalNames[ChocoPyTokens.END_OF_INPUT],
-            ChocoPyTokens.END_OF_INPUT, left, right, null);
+            new ComplexSymbolFactory.Location(yyline + 1, lastColumn);
+        if (type == ChocoPyTokens.NEWLINE || type == ChocoPyTokens.DEDENT) {
+            programEndLocation = right;
+        }
+        return symbolFactory.newSymbol(ChocoPyTokens.terminalNames[type], type,
+            left, right,
+            value);
     }
-    private Symbol queued() { return pending.remove(0); }
-    private Symbol token(int type) { return token(type, yytext()); }
-    private Symbol token(int type, Object value) {
-        if (!pending.isEmpty()) {
-            yypushback(yylength());
-            return queued();
-        }
-        if (atLineStart) {
-            int current = indents.empty() ? 0 : indents.peek();
-            if (pendingIndent > current) {
-                indents.push(pendingIndent);
-                pending.add(symbolFactory.newSymbol(
-                    ChocoPyTokens.terminalNames[ChocoPyTokens.INDENT],
-                    ChocoPyTokens.INDENT, indentLeft, indentRight, indentText));
+
+    /* ---------------------------------------------------------------
+     * Indentation handling (Section 3.1.5 of the ChocoPy reference).
+     * --------------------------------------------------------------- */
+
+    /** Tab stops are every TAB_WIDTH columns, as in Python and Unix. */
+    private static final int TAB_WIDTH = 8;
+
+    /** Indentation levels of the enclosing blocks.  The bottom element is
+     *  always 0 and the levels strictly increase towards the top. */
+    private final Deque<Integer> indentStack = new ArrayDeque<>();
+    {
+        indentStack.push(0);
+    }
+
+    /** Number of DEDENT tokens emitted so far at the end of the input. */
+    private int eofDedents = 0;
+
+    /** Return the indentation level of the whitespace WS, where a tab
+     *  advances to the next multiple of TAB_WIDTH and a space counts as 1. */
+    private static int indentationOf(String ws) {
+        int width = 0;
+        for (int i = 0; i < ws.length(); i++) {
+            if (ws.charAt(i) == '\t') {
+                width += TAB_WIDTH - (width % TAB_WIDTH);
             } else {
-                if (pendingIndent < current && pendingIndent != 0
-                        && !indents.contains(pendingIndent)) {
-                    ComplexSymbolFactory.Location left = indentLeft == null
-                        ? new ComplexSymbolFactory.Location(yyline + 1, 1) : indentLeft;
-                    ComplexSymbolFactory.Location right = indentRight == null
-                        ? left : indentRight;
-                    pending.add(symbolFactory.newSymbol(
-                        ChocoPyTokens.terminalNames[ChocoPyTokens.UNRECOGNIZED],
-                        ChocoPyTokens.UNRECOGNIZED, left, right, "<bad indentation>"));
-                }
-                while (!indents.empty() && pendingIndent < indents.peek()) {
-                    indents.pop();
-                    pending.add(dedent());
-                }
-            }
-            pendingIndent = 0;
-            atLineStart = false;
-            if (!pending.isEmpty()) {
-                yypushback(yylength());
-                return queued();
+                width += 1;
             }
         }
-        return symbol(type, value);
+        return width;
+    }
+
+    /* ---------------------------------------------------------------
+     * Literals.
+     * --------------------------------------------------------------- */
+
+    /** Return the value of the string literal LITERAL (including its
+     *  surrounding quotes) with the escape sequences \" \n \t \\ applied.
+     *  The lexical rule guarantees that no other escapes occur. */
+    private static String unescape(String literal) {
+        StringBuilder value = new StringBuilder();
+        for (int i = 1; i < literal.length() - 1; i++) {
+            char c = literal.charAt(i);
+            if (c == '\\') {
+                i += 1;
+                switch (literal.charAt(i)) {
+                    case 'n':  value.append('\n'); break;
+                    case 't':  value.append('\t'); break;
+                    default:   value.append(literal.charAt(i)); /* \" or \\ */
+                }
+            } else {
+                value.append(c);
+            }
+        }
+        return value.toString();
+    }
+
+    /** Return true iff S has the syntax of an identifier, which makes a
+     *  string literal containing S usable as a class name (IDSTRING). */
+    private static boolean isIdentifier(String s) {
+        return s.matches("[a-zA-Z_][a-zA-Z_0-9]*");
     }
 %}
 
+/* Macros (regexes used in rules below) */
+
 WhiteSpace = [ \t]
-LineBreak = \r\n|\r|\n
-Identifier = [a-zA-Z_][a-zA-Z_0-9]*
-IntegerLiteral = 0|[1-9][0-9]*
-StringChar = [\x20-\x21\x23-\x5B\x5D-\x7E]|\\[\\\"nt]
-StringLiteral = \"{StringChar}*\"
-BadStringLiteral = \"([^\"\\\r\n]|\\.)*\"
+LineBreak  = \r|\n|\r\n
+Comment    = "#" [^\r\n]*
+
+IntegerLiteral = 0 | [1-9][0-9]*
+Identifier     = [a-zA-Z_][a-zA-Z_0-9]*
+
+/* Printable ASCII (32-126) except the double quote and the backslash,
+ * plus the four legal escape sequences. */
+StringChar      = [\x20-\x21\x23-\x5B\x5D-\x7E] | \\[\"nt\\]
+StringLiteral   = \" {StringChar}* \"
+
+/* Anything that looks like a string literal on a single line but contains
+ * an illegal character or escape sequence.  It is matched as a whole so
+ * that the lexer can resynchronise after it. */
+BadStringLiteral = \" ([^\"\\\r\n] | \\[^\r\n])* \"
+
 %%
 
+
+/* ===================================================================
+ * Beginning of a physical line: blank lines and indentation.
+ * =================================================================== */
 <YYINITIAL> {
-  {LineBreak} {
-    if (!atLineStart) {
-      atLineStart = true;
-      pendingIndent = 0;
-      indentLeft = null;
-      indentRight = null;
-      indentText = "";
-      return symbol(ChocoPyTokens.NEWLINE);
-    }
-    pendingIndent = 0;
-    indentLeft = null;
-    indentRight = null;
-    indentText = "";
-  }
-  {WhiteSpace}+ {
-    if (atLineStart) {
-      if (pendingIndent == 0) {
-        indentLeft = new ComplexSymbolFactory.Location(yyline + 1, yycolumn + 1);
-        indentText = yytext();
-      } else {
-        indentText += yytext();
+
+  /* Lines containing only whitespace and/or a comment are ignored
+   * entirely (Section 3.1.4): no NEWLINE, INDENT or DEDENT. */
+  {WhiteSpace}* {Comment}? {LineBreak}  { /* ignore */ }
+
+  /* The same for a last line that has no line break before EOF. */
+  {WhiteSpace}+ | {WhiteSpace}* {Comment} { /* ignore */ }
+
+  /* Leading whitespace of a logical line, followed by its first
+   * character.  Compare the indentation with the top of the stack. */
+  {WhiteSpace}* [^ \t\r\n#] {
+      yypushback(1);                       /* keep the first real char */
+      int indentation = indentationOf(yytext());
+      int width = yylength();
+
+      if (indentation > indentStack.peek()) {
+          indentStack.push(indentation);
+          yybegin(LINE_BODY);
+          return symbolInLine(ChocoPyTokens.INDENT, yytext(), 1, width);
       }
-      indentRight = new ComplexSymbolFactory.Location(yyline + 1, yycolumn + yylength());
-      for (int i = 0; i < yytext().length(); i++) {
-        pendingIndent += yytext().charAt(i) == '\t' ? 8 - (pendingIndent % 8) : 1;
+      if (indentation < indentStack.peek()) {
+          /* Close one block per call: re-scan the same whitespace so that
+           * this rule fires again until the level matches the stack. */
+          indentStack.pop();
+          yypushback(width);
+          return symbolInLine(ChocoPyTokens.DEDENT, "", 1, width);
       }
-    }
+      yybegin(LINE_BODY);                  /* same level: no token */
   }
-  "#"[^\r\n]* { /* comment */ }
-  "and" { return token(ChocoPyTokens.AND); }
-  "or" { return token(ChocoPyTokens.OR); }
-  "not" { return token(ChocoPyTokens.NOT); }
-  "is" { return token(ChocoPyTokens.IS); }
-  "if" { return token(ChocoPyTokens.IF); }
-  "else" { return token(ChocoPyTokens.ELSE); }
-  "elif" { return token(ChocoPyTokens.ELIF); }
-  "while" { return token(ChocoPyTokens.WHILE); }
-  "for" { return token(ChocoPyTokens.FOR); }
-  "in" { return token(ChocoPyTokens.IN); }
-  "def" { return token(ChocoPyTokens.DEF); }
-  "class" { return token(ChocoPyTokens.CLASS); }
-  "return" { return token(ChocoPyTokens.RETURN); }
-  "pass" { return token(ChocoPyTokens.PASS); }
-  "global" { return token(ChocoPyTokens.GLOBAL); }
-  "nonlocal" { return token(ChocoPyTokens.NONLOCAL); }
-  "True" { return token(ChocoPyTokens.TRUE); }
-  "False" { return token(ChocoPyTokens.FALSE); }
-  "None" { return token(ChocoPyTokens.NONE); }
-  "as" { return token(ChocoPyTokens.RESERVED); }
-  "assert" { return token(ChocoPyTokens.RESERVED); }
-  "async" { return token(ChocoPyTokens.RESERVED); }
-  "await" { return token(ChocoPyTokens.RESERVED); }
-  "break" { return token(ChocoPyTokens.RESERVED); }
-  "continue" { return token(ChocoPyTokens.RESERVED); }
-  "del" { return token(ChocoPyTokens.RESERVED); }
-  "except" { return token(ChocoPyTokens.RESERVED); }
-  "finally" { return token(ChocoPyTokens.RESERVED); }
-  "from" { return token(ChocoPyTokens.RESERVED); }
-  "import" { return token(ChocoPyTokens.RESERVED); }
-  "lambda" { return token(ChocoPyTokens.RESERVED); }
-  "raise" { return token(ChocoPyTokens.RESERVED); }
-  "try" { return token(ChocoPyTokens.RESERVED); }
-  "with" { return token(ChocoPyTokens.RESERVED); }
-  "yield" { return token(ChocoPyTokens.RESERVED); }
-  {IntegerLiteral} { try { return token(ChocoPyTokens.NUMBER, Integer.valueOf(yytext())); } catch (NumberFormatException e) { return token(ChocoPyTokens.UNRECOGNIZED); } }
-  {StringLiteral} { return token(ChocoPyTokens.STRING, decodedStringLiteral()); }
-  {BadStringLiteral} { return token(ChocoPyTokens.UNRECOGNIZED); }
-  {Identifier} { return token(ChocoPyTokens.ID); }
-  "==" { return token(ChocoPyTokens.EQ); }
-  "->" { return token(ChocoPyTokens.ARROW); }
-  "!=" { return token(ChocoPyTokens.NE); }
-  "<=" { return token(ChocoPyTokens.LE); }
-  ">=" { return token(ChocoPyTokens.GE); }
-  "+" { return token(ChocoPyTokens.PLUS); }
-  "-" { return token(ChocoPyTokens.MINUS); }
-  "*" { return token(ChocoPyTokens.MULT); }
-  "//" { return token(ChocoPyTokens.DIV); }
-  "%" { return token(ChocoPyTokens.MOD); }
-  "<" { return token(ChocoPyTokens.LT); }
-  ">" { return token(ChocoPyTokens.GT); }
-  "=" { return token(ChocoPyTokens.ASSIGN); }
-  ":" { return token(ChocoPyTokens.COLON); }
-  "," { return token(ChocoPyTokens.COMMA); }
-  "." { return token(ChocoPyTokens.DOT); }
-  "(" { return token(ChocoPyTokens.LPAREN); }
-  ")" { return token(ChocoPyTokens.RPAREN); }
-  "[" { return token(ChocoPyTokens.LBRACKET); }
-  "]" { return token(ChocoPyTokens.RBRACKET); }
 }
-<<EOF>> {
-  if (!pending.isEmpty()) return queued();
-  if (!eofDone) {
-    eofDone = true;
-    if (!atLineStart) {
-      atLineStart = true;
-      pending.add(virtual(ChocoPyTokens.NEWLINE));
-    }
-    while (!indents.empty()) { indents.pop(); pending.add(eofDedent()); }
-    pending.add(endToken());
-    return queued();
+
+
+/* ===================================================================
+ * Inside a logical line.
+ * =================================================================== */
+<LINE_BODY> {
+
+  /* End of the logical line. */
+  {LineBreak}                 { yybegin(YYINITIAL);
+                                return symbol(ChocoPyTokens.NEWLINE); }
+
+  /* Whitespace between tokens and comments are skipped. */
+  {WhiteSpace}+               { /* ignore */ }
+  {Comment}                   { /* ignore */ }
+
+  /* Keywords that are used by the ChocoPy grammar. */
+  "and"                       { return symbol(ChocoPyTokens.AND); }
+  "class"                     { return symbol(ChocoPyTokens.CLASS); }
+  "def"                       { return symbol(ChocoPyTokens.DEF); }
+  "elif"                      { return symbol(ChocoPyTokens.ELIF); }
+  "else"                      { return symbol(ChocoPyTokens.ELSE); }
+  "False"                     { return symbol(ChocoPyTokens.FALSE, false); }
+  "for"                       { return symbol(ChocoPyTokens.FOR); }
+  "global"                    { return symbol(ChocoPyTokens.GLOBAL); }
+  "if"                        { return symbol(ChocoPyTokens.IF); }
+  "in"                        { return symbol(ChocoPyTokens.IN); }
+  "is"                        { return symbol(ChocoPyTokens.IS); }
+  "None"                      { return symbol(ChocoPyTokens.NONE); }
+  "nonlocal"                  { return symbol(ChocoPyTokens.NONLOCAL); }
+  "not"                       { return symbol(ChocoPyTokens.NOT); }
+  "or"                        { return symbol(ChocoPyTokens.OR); }
+  "pass"                      { return symbol(ChocoPyTokens.PASS); }
+  "return"                    { return symbol(ChocoPyTokens.RETURN); }
+  "True"                      { return symbol(ChocoPyTokens.TRUE, true); }
+  "while"                     { return symbol(ChocoPyTokens.WHILE); }
+
+  /* Python keywords that ChocoPy reserves but does not use.  They are
+   * not identifiers, and no grammar rule accepts them. */
+  "as" | "assert" | "async" | "await" | "break" | "continue" | "del"
+  | "except" | "finally" | "from" | "import" | "lambda" | "raise"
+  | "try" | "with" | "yield"  { return symbol(ChocoPyTokens.RESERVED); }
+
+  /* Identifiers (after the keywords, so that keywords win ties). */
+  {Identifier}                { return symbol(ChocoPyTokens.IDENTIFIER, yytext()); }
+
+  /* Integer literals must fit in a signed 32-bit int (Section 3.4.2). */
+  {IntegerLiteral}            {
+      try {
+          return symbol(ChocoPyTokens.INTEGER, Integer.parseInt(yytext()));
+      } catch (NumberFormatException tooLarge) {
+          return symbol(ChocoPyTokens.UNRECOGNIZED);
+      }
   }
-  return null;
+
+  /* String literals.  Strings whose contents look like an identifier
+   * may also be used as type names, hence the separate IDSTRING. */
+  {StringLiteral}             {
+      String value = unescape(yytext());
+      return symbol(isIdentifier(value) ? ChocoPyTokens.IDSTRING
+                                        : ChocoPyTokens.STRING, value);
+  }
+  {BadStringLiteral}          { return symbol(ChocoPyTokens.UNRECOGNIZED); }
+
+  /* Operators. */
+  "+"                         { return symbol(ChocoPyTokens.PLUS); }
+  "-"                         { return symbol(ChocoPyTokens.MINUS); }
+  "*"                         { return symbol(ChocoPyTokens.TIMES); }
+  "//"                        { return symbol(ChocoPyTokens.IDIV); }
+  "%"                         { return symbol(ChocoPyTokens.MOD); }
+  "<"                         { return symbol(ChocoPyTokens.LT); }
+  ">"                         { return symbol(ChocoPyTokens.GT); }
+  "<="                        { return symbol(ChocoPyTokens.LEQ); }
+  ">="                        { return symbol(ChocoPyTokens.GEQ); }
+  "=="                        { return symbol(ChocoPyTokens.EQEQ); }
+  "!="                        { return symbol(ChocoPyTokens.NEQ); }
+  "="                         { return symbol(ChocoPyTokens.EQ); }
+
+  /* Delimiters. */
+  "("                         { return symbol(ChocoPyTokens.LPAREN); }
+  ")"                         { return symbol(ChocoPyTokens.RPAREN); }
+  "["                         { return symbol(ChocoPyTokens.LINDEX); }
+  "]"                         { return symbol(ChocoPyTokens.RINDEX); }
+  ","                         { return symbol(ChocoPyTokens.COMMA); }
+  ":"                         { return symbol(ChocoPyTokens.COLON); }
+  "."                         { return symbol(ChocoPyTokens.DOT); }
+  "->"                        { return symbol(ChocoPyTokens.ARROW); }
 }
-[^] { return token(ChocoPyTokens.UNRECOGNIZED); }
+
+/* End of input: terminate the last logical line if the file does not end
+ * with a line break, then close every open block, then report EOF. */
+<<EOF>>                       {
+      if (yystate() == LINE_BODY) {
+          yybegin(YYINITIAL);
+          return symbolInLine(ChocoPyTokens.NEWLINE, "",
+                              yycolumn + 1, yycolumn + 1);
+      }
+      if (indentStack.peek() > 0) {
+          /* The k-th DEDENT at the end of input is placed at column k of
+           * the line after the last one, as the reference parser does. */
+          indentStack.pop();
+          eofDedents += 1;
+          return symbolInLine(ChocoPyTokens.DEDENT, "",
+                              eofDedents, eofDedents);
+      }
+      return symbol(ChocoPyTokens.EOF);
+  }
+
+/* Error fallback: the lexer never fails, it hands an UNRECOGNIZED token
+ * to the parser, which has no rule for it and reports a syntax error. */
+[^]                           { return symbol(ChocoPyTokens.UNRECOGNIZED); }
