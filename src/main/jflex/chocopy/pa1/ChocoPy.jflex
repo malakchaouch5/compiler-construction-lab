@@ -42,16 +42,6 @@ import java.util.Deque;
 
     /** Producer of token-related values for the parser. */
     final ComplexSymbolFactory symbolFactory = new ComplexSymbolFactory();
-    private ComplexSymbolFactory.Location programStartLocation;
-    private ComplexSymbolFactory.Location programEndLocation;
-
-    public ComplexSymbolFactory.Location getProgramStartLocation() {
-        return programStartLocation;
-    }
-
-    public ComplexSymbolFactory.Location getProgramEndLocation() {
-        return programEndLocation;
-    }
 
     /** Return a terminal symbol of syntactic category TYPE and no
      *  semantic value at the current source location. */
@@ -62,19 +52,9 @@ import java.util.Deque;
     /** Return a terminal symbol of syntactic category TYPE and semantic
      *  value VALUE at the current source location. */
     private Symbol symbol(int type, Object value) {
-        ComplexSymbolFactory.Location left =
-            new ComplexSymbolFactory.Location(yyline + 1, yycolumn + 1);
-        ComplexSymbolFactory.Location right =
-            new ComplexSymbolFactory.Location(yyline + 1, yycolumn + yylength());
-        if (programStartLocation == null && type != ChocoPyTokens.EOF
-                && type != ChocoPyTokens.NEWLINE) {
-            programStartLocation = left;
-        }
-        if (type == ChocoPyTokens.NEWLINE) {
-            programEndLocation = right;
-        }
         return symbolFactory.newSymbol(ChocoPyTokens.terminalNames[type], type,
-            left, right,
+            new ComplexSymbolFactory.Location(yyline + 1, yycolumn + 1),
+            new ComplexSymbolFactory.Location(yyline + 1,yycolumn + yylength()),
             value);
     }
 
@@ -85,15 +65,9 @@ import java.util.Deque;
      *  line rather than the text matched by the current rule. */
     private Symbol symbolInLine(int type, Object value,
                                 int firstColumn, int lastColumn) {
-        ComplexSymbolFactory.Location left =
-            new ComplexSymbolFactory.Location(yyline + 1, firstColumn);
-        ComplexSymbolFactory.Location right =
-            new ComplexSymbolFactory.Location(yyline + 1, lastColumn);
-        if (type == ChocoPyTokens.NEWLINE || type == ChocoPyTokens.DEDENT) {
-            programEndLocation = right;
-        }
         return symbolFactory.newSymbol(ChocoPyTokens.terminalNames[type], type,
-            left, right,
+            new ComplexSymbolFactory.Location(yyline + 1, firstColumn),
+            new ComplexSymbolFactory.Location(yyline + 1, lastColumn),
             value);
     }
 

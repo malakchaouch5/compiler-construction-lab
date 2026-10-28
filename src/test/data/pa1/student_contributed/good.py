@@ -1,5 +1,5 @@
 # A small library system that exercises (almost) every syntax rule of
-# ChocoPy. This file must parse without any error.
+# ChocoPy.  This file must parse without any error.
 
 # Global variable definitions with every kind of literal and type.
 count: int = 0

@@ -5,6 +5,8 @@ import chocopy.common.astnodes.*;
 
 parser code {:
     public final Errors errors = new Errors(new ArrayList<CompilerError>());
+    private ComplexSymbolFactory.Location programStartLocation;
+    private ComplexSymbolFactory.Location programEndLocation;
 
     private class IfTail {
         final List<Stmt> body;
@@ -39,6 +41,23 @@ parser code {:
     @Override
     public SymbolFactory getSymbolFactory() {
         return ((ChocoPyLexer) getScanner()).symbolFactory;
+    }
+
+    @Override
+    public Symbol scan() throws Exception {
+        Symbol token = super.scan();
+        if (token != null && token.sym != ChocoPyTokens.EOF
+                && token instanceof ComplexSymbolFactory.ComplexSymbol) {
+            ComplexSymbolFactory.ComplexSymbol positioned =
+                (ComplexSymbolFactory.ComplexSymbol) token;
+            if (programStartLocation == null && token.sym != ChocoPyTokens.NEWLINE) {
+                programStartLocation = positioned.xleft;
+            }
+            if (token.sym == ChocoPyTokens.NEWLINE || token.sym == ChocoPyTokens.DEDENT) {
+                programEndLocation = positioned.xright;
+            }
+        }
+        return token;
     }
 
     @Override
@@ -129,13 +148,13 @@ start with start_program;
 
 start_program ::= decl_list:d optional_statements:s
     {: ComplexSymbolFactory.Location programLeft =
-           ((ChocoPyLexer) getScanner()).getProgramStartLocation();
+           programStartLocation;
        if (programLeft == null) {
            programLeft = !d.isEmpty() ? left(d)
                : (!s.isEmpty() ? left(s) : new ComplexSymbolFactory.Location(0, 0));
        }
        ComplexSymbolFactory.Location programRight =
-           ((ChocoPyLexer) getScanner()).getProgramEndLocation();
+           programEndLocation;
        if (programRight == null) {
            programRight = !s.isEmpty() ? right(s)
                : (!d.isEmpty() ? right(d) : new ComplexSymbolFactory.Location(0, 0));
