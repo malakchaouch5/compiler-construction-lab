@@ -75,18 +75,24 @@ About 30 hours in total for the whole team.
 
 ### Contributions
 
-- **Omar Kamel:** the JFlex lexer (`ChocoPy.jflex`): line structure,
-  INDENT/DEDENT generation, tab handling, string and integer literals,
-  reserved keywords, UNRECOGNIZED tokens; the test program
-  `student_contributed/good.py` and the differential testing against the
-  reference parser.
-- **Malak Chaouch:** the CUP grammar (`ChocoPy.cup`): declarations,
-  statements, expressions with precedences, `elif` desugaring, the
-  construction of AST nodes with exact source locations, error recovery,
-  and the test program `student_contributed/bad.py`.
+We initially worked independently, and each of us developed a complete
+lexer/parser solution along with our own `good.py` and `bad.py` test programs.
+For the combined submission, we agreed to use Omar's JFlex lexer
+(`src/main/jflex/chocopy/pa1/ChocoPy.jflex`) and `good.py`, together with
+Malak's CUP parser (`src/main/cup/chocopy/pa1/ChocoPy.cup`) and `bad.py`.
 
-We wrote this write-up together and reviewed each other's parts, so both of
-us can explain every part of the code.
+- **Omar Kamel:** the selected JFlex lexer, including line structure,
+  INDENT/DEDENT generation, tab handling, string and integer literals,
+  reserved keywords, and UNRECOGNIZED tokens; the selected `good.py` test;
+  and differential testing against the reference parser.
+- **Malak Chaouch:** the selected CUP grammar, including declarations,
+  statements, expressions with precedences, `elif` desugaring, AST nodes with
+  source locations, and error recovery; the selected `bad.py` test; and
+  adapting the parser's token names and interface to work with Omar's lexer.
+
+We integrated and tested the selected parts together, reviewed each other's
+work, and wrote this write-up collaboratively. Both of us can explain the
+combined implementation.
 
 ### Testing
 
@@ -215,5 +221,4 @@ its block.
 
 This starter code is adapted from the work of the **ChocoPy team**
 (see [this repository](https://github.com/cs164berkeley/pa1-chocopy-parser)). For more information, visit [ChocoPy.org](https://chocopy.org/).
-
 
