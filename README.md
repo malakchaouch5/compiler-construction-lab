@@ -75,18 +75,24 @@ About 30 hours in total for the whole team.
 
 ### Contributions
 
-- **Omar Kamel:** the JFlex lexer (`ChocoPy.jflex`): line structure,
-  INDENT/DEDENT generation, tab handling, string and integer literals,
-  reserved keywords, UNRECOGNIZED tokens; the test program
-  `student_contributed/good.py` and the differential testing against the
-  reference parser.
-- **Malak Chaouch:** the CUP grammar (`ChocoPy.cup`): declarations,
-  statements, expressions with precedences, `elif` desugaring, the
-  construction of AST nodes with exact source locations, error recovery,
-  and the test program `student_contributed/bad.py`.
+We initially worked independently, and each of us developed a complete
+lexer/parser solution along with our own `good.py` and `bad.py` test programs.
+For the combined submission, we agreed to use Omar's JFlex lexer
+(`src/main/jflex/chocopy/pa1/ChocoPy.jflex`) and `good.py`, together with
+Malak's CUP parser (`src/main/cup/chocopy/pa1/ChocoPy.cup`) and `bad.py`.
 
-We wrote this write-up together and reviewed each other's parts, so both of
-us can explain every part of the code.
+- **Omar Kamel:** the selected JFlex lexer, including line structure,
+  INDENT/DEDENT generation, tab handling, string and integer literals,
+  reserved keywords, and UNRECOGNIZED tokens; the selected `good.py` test;
+  and differential testing against the reference parser.
+- **Malak Chaouch:** the selected CUP grammar, including declarations,
+  statements, expressions with precedences, `elif` desugaring, AST nodes with
+  source locations, and error recovery; the selected `bad.py` test; and
+  adapting the parser's token names and interface to work with Omar's lexer.
+
+We integrated and tested the selected parts together, reviewed each other's
+work, and wrote this write-up collaboratively. Both of us can explain the
+combined implementation.
 
 ### Testing
 
@@ -132,44 +138,50 @@ the same location as in the reference implementation.
 
 ### Question 2: What was the hardest language feature?
 
-Error recovery: file `src/main/cup/chocopy/pa1/ChocoPy.cup`, lines
-**232-296** (`program_body`, `recovery`, `dedent`, `skipped_body`), together
-with `func_body` (line 353), `stmts` (line 403), `block_stmts` (line 438)
-and the precedence declarations on lines **223-224**.
+Reproducing the exact source locations of the reference implementation,
+in particular for `if`/`elif`/`else` chains, function definitions and the
+`Program` node: file `src/main/cup/chocopy/pa1/ChocoPy.cup`, lines
+**149-163** (`start_program`, together with `scan()` on lines **46-61**),
+**202-210** (`function_definition`) and **292-309** (`compound_statement`,
+`if_tail`), with the helper class `IfTail` on lines **11-19**.
 
-Our first version simply added `error NEWLINE` rules to left-recursive
-lists, which gave three problems:
+The hidden tests compare the complete JSON output, so every location has to
+be equal, and the reference does not always use "from the first to the last
+token of the rule":
 
-1. *Conflicts.* At the top level and in function bodies a declaration and a
-   statement can start at the same position. Attaching a recovery rule to
-   both lists, or allowing an error at the very first token of a body,
-   produced shift/reduce conflicts on `error`, because the empty list could
-   be reduced with `error` as lookahead. We solved this by writing bodies as
-   right-recursive sequences "declarations, then statements". Now each
-   position has exactly one rule that shifts `error`: before the first
-   statement the error belongs to the declaration part (so declarations may
-   still follow, as the specification requires), after it to the statements.
-2. *Broken headers.* After an error in `def f(a, b) -> 1:` skipping to the
-   NEWLINE leaves the indented body, which then caused a cascade of errors.
-   The rule `error NEWLINE INDENT skipped_body dedent` parses the body and
-   drops it, so the errors inside the body are still reported (like the
-   reference implementation does) but nothing else.
-3. *An invalid token right after a block.* An LR parser can only reduce a
-   finished block if the next token is a valid lookahead. If the line after
-   a block starts with e.g. `break` or `$`, CUP's recovery pops the already
-   shifted DEDENT and resumes inside the block; the blocks are then
-   unbalanced and the whole parse fails at EOF. Every block therefore ends
-   with the nonterminal `dedent ::= DEDENT | DEDENT recovery`, and the
-   precedence declarations make CUP prefer shifting `error` there, so the
-   bad line is recovered without losing the DEDENT.
+1. *elif chains.* The AST has no elif node: `elif b: ...` becomes an `IfStmt`
+   that is the only statement of the else body of the enclosing `IfStmt`.
+   Both nodes end at the DEDENT of the *last* block of the whole chain, which
+   the outer rule has not seen yet when its first block is finished. We
+   therefore parse the rest of the chain into the nonterminal `if_tail`,
+   which returns an `IfTail` object holding the else body together with the
+   end location of its last DEDENT. Each level takes its end from the tail,
+   or from its own DEDENT if there is no tail, so for
+   `if a: ... elif b: ... else: ...` both `IfStmt` nodes end at the same
+   position.
+2. *Functions.* A `FuncDef` ends where the NEWLINE of its last statement
+   ends, not at the DEDENT like a block statement, so its end is taken from
+   the `function_body` symbol and not from the DEDENT token. A function
+   without `->` gets the return type `ClassType` `<None>`, which the reference
+   places at the colon of the header with zero width, e.g. `[1, 8, 1, 8]`
+   for `def f():`.
+3. *The program.* `Program` starts at its first token and ends where its
+   last NEWLINE or DEDENT ends. This cannot be computed from the two lists
+   alone: a program that contains only `pass` statements has an empty
+   statement list but still a location. The parser therefore overrides
+   `scan()`, which hands every token from the lexer to the parser, and
+   records the start of the first token and the end of the last NEWLINE or
+   DEDENT; `start_program` builds the `Program` node from these two
+   positions, and an empty file gets `[0, 0, 0, 0]`.
 
-On our `bad.py` the parser reports all 12 intended errors, each exactly once
-and on the right line, while the reference implementation reports 19,
-several of them follow-up errors at DEDENT tokens, and misses the ones on
-lines 12 and 25. The other demanding part was reproducing the
-exact source locations of the reference implementation, e.g. that a
-function ends with its last statement while an `if` ends with the DEDENT of
-its block.
+To find these cases we compared every location of our output with the
+reference on more than 11,000 programs (see *Testing*). Error recovery uses
+the `error` symbol at the statement level (`statement ::= error NEWLINE`)
+and for broken `def` and `class` headers (`DEF error NEWLINE INDENT
+function_body DEDENT`, `CLASS error NEWLINE INDENT class_decl_list DEDENT`),
+so the body of a broken function or class is still parsed and the rest of
+the program is checked. The first error is always reported at the same
+token as in the reference parser.
 
 ### Bug reports and remarks on the course material
 
@@ -215,5 +227,4 @@ its block.
 
 This starter code is adapted from the work of the **ChocoPy team**
 (see [this repository](https://github.com/cs164berkeley/pa1-chocopy-parser)). For more information, visit [ChocoPy.org](https://chocopy.org/).
-
 

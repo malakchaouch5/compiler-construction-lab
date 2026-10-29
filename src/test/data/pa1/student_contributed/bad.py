@@ -1,53 +1,40 @@
-# Each numbered line below contains one syntax error.  The parser must
-# report every one of them and recover after each, so that the correct
-# declarations and statements in between are still parsed.
+# Invalid syntax examples on separate lines, with valid statements to exercise
+# parser recovery after each error.
+print(1 + )
+print(2)
 
-# 1. Variable definitions only accept literals, not expressions.
-x: int = 1 + 2
-y: int = 3
+print(3 + )
 
-# 2. A parameter without a type annotation breaks the function header;
-#    the body is still parsed and the error inside it is reported (3).
-def add(a: int, b) -> int:
-    z: int = a
+print(4)
+
+# This declaration is invalid because it comes after top-level statements.
+value: int = 1 + 2
+after_initializer_error: int = 3
+
+# This function declaration is also after top-level statements.
+def broken(a: int, b) -> int:
+    local: int = a
     return a + b
+print(5)
 
-# 4. A class needs a superclass in parentheses.
-class Point:
-    x: int = 0
-
-# The parser has recovered: this declaration is accepted.
-origin: int = 0
-
-# 5. A class body with an invalid member in the middle.
+# This class declaration is likewise after top-level statements.
 class Pair(object):
     first: int = 0
     second = 1
     third: int = 2
+after_class_error: int = 6
 
-# 6. An assignment cannot be used as an expression.
-x = (y = 2)
-print(x)
+# Chained comparisons are not allowed.
+if 1 < value < 3:
+    print(value)
+print(7)
 
-# 7. Comparison operators are not associative.
-if 1 < x < 3:
-    print(x)
-
-# 8. Unknown operator characters are reported as UNRECOGNIZED tokens.
-x = x && y
-
-# 9. `not` cannot be an operand of `==` without parentheses.
+# Unknown characters and an invalid logical-operator combination are errors.
+value = value && 1
 print(True == not False)
+print(9)
 
-# 10. An unexpected indentation.
-x = 1
-    y = 2
-
-# 11. A missing colon after a while condition.
-while x > 0
-    x = x - 1
-
-# 12. Reserved Python keywords cannot be used as names.
-lambda = 3
-
-print("done")
+# A missing colon in a compound statement should recover at the next line.
+while value > 0
+    value = value - 1
+print(10)
